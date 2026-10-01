@@ -4,426 +4,519 @@ const db = require("../config/database");
 // START EXAM
 // ==========================================
 
-const startExam = (req, res) => {
-  const userId = req.user.id;
-  const examId = req.params.id;
+const startExam = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const examId = req.params.id;
 
-  db.get(
-    `SELECT * FROM exams WHERE id = ?`,
-    [examId],
-    (examError, exam) => {
-      if (examError) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch exam",
-          error: examError.message
-        });
-      }
+    // ------------------------------------------
+    // Get exam
+    // ------------------------------------------
 
-      if (!exam) {
-        return res.status(404).json({
-          success: false,
-          message: "Exam not found"
-        });
-      }
+    const examResult = await db.query(
+      `
+      SELECT *
+      FROM exams
+      WHERE id = $1
+      `,
+      [examId]
+    );
 
-      const now = new Date();
-      const startTime = new Date(exam.start_time);
-      const endTime = new Date(exam.end_time);
-
-      if (now < startTime) {
-        return res.status(400).json({
-          success: false,
-          message: "Exam has not started yet"
-        });
-      }
-
-      if (now > endTime) {
-        return res.status(400).json({
-          success: false,
-          message: "Exam has already ended"
-        });
-      }
-
-      db.get(
-        `SELECT * FROM attempts WHERE user_id = ? AND exam_id = ?`,
-        [userId, examId],
-        (attemptError, existingAttempt) => {
-          if (attemptError) {
-            return res.status(500).json({
-              success: false,
-              message: "Failed to check existing attempt",
-              error: attemptError.message
-            });
-          }
-
-          if (existingAttempt) {
-            return res.status(409).json({
-              success: false,
-              message: "You have already attempted this exam"
-            });
-          }
-
-          db.all(
-            `SELECT
-              id,
-              question_text,
-              option_a,
-              option_b,
-              option_c,
-              option_d,
-              question_order
-             FROM questions
-             WHERE exam_id = ?
-             ORDER BY question_order ASC`,
-            [examId],
-            (questionError, questions) => {
-              if (questionError) {
-                return res.status(500).json({
-                  success: false,
-                  message: "Failed to fetch questions",
-                  error: questionError.message
-                });
-              }
-
-              if (!questions || questions.length === 0) {
-                return res.status(400).json({
-                  success: false,
-                  message: "No questions available for this exam"
-                });
-              }
-
-              const startedAt = new Date().toISOString();
-
-              db.run(
-                `INSERT INTO attempts
-                (
-                  user_id,
-                  exam_id,
-                  started_at,
-                  total_questions
-                )
-                VALUES (?, ?, ?, ?)`,
-                [
-                  userId,
-                  examId,
-                  startedAt,
-                  questions.length
-                ],
-                function (insertError) {
-                  if (insertError) {
-                    return res.status(500).json({
-                      success: false,
-                      message: "Failed to start exam",
-                      error: insertError.message
-                    });
-                  }
-
-                  return res.status(200).json({
-                    success: true,
-                    message: "Exam started successfully",
-                    attempt: {
-                      id: this.lastID,
-                      user_id: userId,
-                      exam_id: Number(examId),
-                      started_at: startedAt
-                    },
-                    exam: {
-                      id: exam.id,
-                      title: exam.title,
-                      topic: exam.topic,
-                      start_time: exam.start_time,
-                      end_time: exam.end_time,
-                      duration_minutes: exam.duration_minutes,
-                      rules: exam.rules
-                    },
-                    totalQuestions: questions.length,
-                    questions
-                  });
-                }
-              );
-            }
-          );
-        }
-      );
+    if (examResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Exam not found"
+      });
     }
-  );
+
+    const exam = examResult.rows[0];
+
+    // ------------------------------------------
+    // Check exam timing
+    // ------------------------------------------
+
+    const now = new Date();
+    const startTime = new Date(exam.start_time);
+    const endTime = new Date(exam.end_time);
+
+    if (now < startTime) {
+      return res.status(400).json({
+        success: false,
+        message: "Exam has not started yet"
+      });
+    }
+
+    if (now > endTime) {
+      return res.status(400).json({
+        success: false,
+        message: "Exam has already ended"
+      });
+    }
+
+    // ------------------------------------------
+    // Check existing attempt
+    // ------------------------------------------
+
+    const attemptResult = await db.query(
+      `
+      SELECT *
+      FROM attempts
+      WHERE user_id = $1
+        AND exam_id = $2
+      `,
+      [userId, examId]
+    );
+
+    if (attemptResult.rows.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: "You have already attempted this exam"
+      });
+    }
+
+    // ------------------------------------------
+    // Get questions
+    // ------------------------------------------
+
+    const questionResult = await db.query(
+      `
+      SELECT
+        id,
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        question_order
+      FROM questions
+      WHERE exam_id = $1
+      ORDER BY question_order ASC
+      `,
+      [examId]
+    );
+
+    const questions = questionResult.rows;
+
+    if (!questions || questions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No questions available for this exam"
+      });
+    }
+
+    // ------------------------------------------
+    // Create attempt
+    // ------------------------------------------
+
+    const startedAt = new Date().toISOString();
+
+    const insertResult = await db.query(
+      `
+      INSERT INTO attempts
+      (
+        user_id,
+        exam_id,
+        started_at,
+        total_questions
+      )
+      VALUES
+      ($1, $2, $3, $4)
+      RETURNING id
+      `,
+      [
+        userId,
+        examId,
+        startedAt,
+        questions.length
+      ]
+    );
+
+    const attemptId = insertResult.rows[0].id;
+
+    // ------------------------------------------
+    // Response
+    // ------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+      message: "Exam started successfully",
+
+      attempt: {
+        id: attemptId,
+        user_id: userId,
+        exam_id: Number(examId),
+        started_at: startedAt
+      },
+
+      exam: {
+        id: exam.id,
+        title: exam.title,
+        topic: exam.topic,
+        start_time: exam.start_time,
+        end_time: exam.end_time,
+        duration_minutes: exam.duration_minutes,
+        rules: exam.rules
+      },
+
+      totalQuestions: questions.length,
+      questions
+    });
+
+  } catch (error) {
+    console.error(
+      "Start exam error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to start exam",
+      error: error.message
+    });
+  }
 };
+
 
 // ==========================================
 // SUBMIT EXAM
 // ==========================================
 
-const submitExam = (req, res) => {
-  const userId = req.user.id;
-  const examId = req.params.id;
-  const submittedAnswers = req.body.answers;
+const submitExam = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const examId = req.params.id;
+    const submittedAnswers = req.body.answers;
 
-  if (!Array.isArray(submittedAnswers)) {
-    return res.status(400).json({
-      success: false,
-      message: "answers must be an array"
+    // ------------------------------------------
+    // Validate answers
+    // ------------------------------------------
+
+    if (!Array.isArray(submittedAnswers)) {
+      return res.status(400).json({
+        success: false,
+        message: "answers must be an array"
+      });
+    }
+
+    // ------------------------------------------
+    // Get attempt
+    // ------------------------------------------
+
+    const attemptResult = await db.query(
+      `
+      SELECT *
+      FROM attempts
+      WHERE user_id = $1
+        AND exam_id = $2
+      `,
+      [userId, examId]
+    );
+
+    if (attemptResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "You have not started this exam"
+      });
+    }
+
+    const attempt = attemptResult.rows[0];
+
+    // ------------------------------------------
+    // Check already submitted
+    // ------------------------------------------
+
+    if (attempt.submitted_at) {
+      return res.status(409).json({
+        success: false,
+        message: "Exam has already been submitted"
+      });
+    }
+
+    // ------------------------------------------
+    // Get questions with correct answers
+    // ------------------------------------------
+
+    const questionResult = await db.query(
+      `
+      SELECT
+        id,
+        correct_answer
+      FROM questions
+      WHERE exam_id = $1
+      ORDER BY question_order ASC
+      `,
+      [examId]
+    );
+
+    const questions = questionResult.rows;
+
+    // ------------------------------------------
+    // Create answer map
+    // ------------------------------------------
+
+    const answerMap = {};
+
+    submittedAnswers.forEach((answer) => {
+      answerMap[answer.question_id] =
+        answer.selected_answer;
     });
-  }
 
-  db.get(
-    `SELECT * FROM attempts
-     WHERE user_id = ? AND exam_id = ?`,
-    [userId, examId],
-    (attemptError, attempt) => {
-      if (attemptError) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch attempt",
-          error: attemptError.message
-        });
+    // ------------------------------------------
+    // Calculate result
+    // ------------------------------------------
+
+    let correctAnswers = 0;
+    let wrongAnswers = 0;
+    let skippedAnswers = 0;
+
+    questions.forEach((question) => {
+      const selectedAnswer =
+        answerMap[question.id];
+
+      if (!selectedAnswer) {
+        skippedAnswers++;
+      } else if (
+        selectedAnswer.toUpperCase() ===
+        question.correct_answer.toUpperCase()
+      ) {
+        correctAnswers++;
+      } else {
+        wrongAnswers++;
       }
+    });
 
-      if (!attempt) {
-        return res.status(404).json({
-          success: false,
-          message: "You have not started this exam"
-        });
-      }
+    const totalQuestions = questions.length;
 
-      if (attempt.submitted_at) {
-        return res.status(409).json({
-          success: false,
-          message: "Exam has already been submitted"
-        });
-      }
+    const score =
+      totalQuestions > 0
+        ? Number(
+            (
+              (correctAnswers / totalQuestions) *
+              100
+            ).toFixed(2)
+          )
+        : 0;
 
-      db.all(
-        `SELECT
-          id,
-          correct_answer
-         FROM questions
-         WHERE exam_id = ?
-         ORDER BY question_order ASC`,
-        [examId],
-        (questionError, questions) => {
-          if (questionError) {
-            return res.status(500).json({
-              success: false,
-              message: "Failed to fetch questions",
-              error: questionError.message
-            });
-          }
+    // ------------------------------------------
+    // Calculate time taken
+    // ------------------------------------------
 
-          const answerMap = {};
+    const submittedAt = new Date();
 
-          submittedAnswers.forEach((answer) => {
-            answerMap[answer.question_id] = answer.selected_answer;
-          });
+    const startedAt =
+      new Date(attempt.started_at);
 
-          let correctAnswers = 0;
-          let wrongAnswers = 0;
-          let skippedAnswers = 0;
+    const timeTakenSeconds = Math.max(
+      0,
+      Math.floor(
+        (
+          submittedAt.getTime() -
+          startedAt.getTime()
+        ) / 1000
+      )
+    );
 
-          questions.forEach((question) => {
-            const selectedAnswer = answerMap[question.id];
+    // ------------------------------------------
+    // Update attempt
+    // ------------------------------------------
 
-            if (!selectedAnswer) {
-              skippedAnswers++;
-            } else if (
-              selectedAnswer.toUpperCase() ===
-              question.correct_answer.toUpperCase()
-            ) {
-              correctAnswers++;
-            } else {
-              wrongAnswers++;
-            }
-          });
+    await db.query(
+      `
+      UPDATE attempts
+      SET
+        submitted_at = $1,
+        score = $2,
+        total_questions = $3,
+        correct_answers = $4,
+        wrong_answers = $5,
+        skipped_answers = $6,
+        time_taken_seconds = $7
+      WHERE id = $8
+      `,
+      [
+        submittedAt.toISOString(),
+        score,
+        totalQuestions,
+        correctAnswers,
+        wrongAnswers,
+        skippedAnswers,
+        timeTakenSeconds,
+        attempt.id
+      ]
+    );
 
-          const totalQuestions = questions.length;
+    // ------------------------------------------
+    // Save individual answers
+    // ------------------------------------------
 
-          const score =
-            totalQuestions > 0
-              ? Number(
-                  ((correctAnswers / totalQuestions) * 100).toFixed(2)
-                )
-              : 0;
+    for (const question of questions) {
 
-          const submittedAt = new Date();
+      const selectedAnswer =
+        answerMap[question.id] || null;
 
-          const startedAt = new Date(attempt.started_at);
+      const isCorrect =
+        selectedAnswer &&
+        selectedAnswer.toUpperCase() ===
+          question.correct_answer.toUpperCase()
+          ? 1
+          : 0;
 
-          const timeTakenSeconds = Math.max(
-            0,
-            Math.floor(
-              (submittedAt.getTime() - startedAt.getTime()) / 1000
-            )
-          );
-
-          db.run(
-            `UPDATE attempts
-             SET
-               submitted_at = ?,
-               score = ?,
-               total_questions = ?,
-               correct_answers = ?,
-               wrong_answers = ?,
-               skipped_answers = ?,
-               time_taken_seconds = ?
-             WHERE id = ?`,
-            [
-              submittedAt.toISOString(),
-              score,
-              totalQuestions,
-              correctAnswers,
-              wrongAnswers,
-              skippedAnswers,
-              timeTakenSeconds,
-              attempt.id
-            ],
-            function (updateError) {
-              if (updateError) {
-                return res.status(500).json({
-                  success: false,
-                  message: "Failed to submit exam",
-                  error: updateError.message
-                });
-              }
-
-              const insertAnswer = (index) => {
-                if (index >= questions.length) {
-                  return res.status(200).json({
-                    success: true,
-                    message: "Exam submitted successfully",
-                    result: {
-                      attempt_id: attempt.id,
-                      exam_id: Number(examId),
-                      total_questions: totalQuestions,
-                      correct_answers: correctAnswers,
-                      wrong_answers: wrongAnswers,
-                      skipped_answers: skippedAnswers,
-                      score,
-                      time_taken_seconds: timeTakenSeconds
-                    }
-                  });
-                }
-
-                const question = questions[index];
-
-                const selectedAnswer =
-                  answerMap[question.id] || null;
-
-                const isCorrect =
-                  selectedAnswer &&
-                  selectedAnswer.toUpperCase() ===
-                    question.correct_answer.toUpperCase()
-                    ? 1
-                    : 0;
-
-                db.run(
-                  `INSERT INTO answers
-                   (
-                     attempt_id,
-                     question_id,
-                     selected_answer,
-                     is_correct
-                   )
-                   VALUES (?, ?, ?, ?)`,
-                  [
-                    attempt.id,
-                    question.id,
-                    selectedAnswer,
-                    isCorrect
-                  ],
-                  (answerError) => {
-                    if (answerError) {
-                      return res.status(500).json({
-                        success: false,
-                        message: "Failed to save answers",
-                        error: answerError.message
-                      });
-                    }
-
-                    insertAnswer(index + 1);
-                  }
-                );
-              };
-
-              insertAnswer(0);
-            }
-          );
-        }
+      await db.query(
+        `
+        INSERT INTO answers
+        (
+          attempt_id,
+          question_id,
+          selected_answer,
+          is_correct
+        )
+        VALUES
+        ($1, $2, $3, $4)
+        `,
+        [
+          attempt.id,
+          question.id,
+          selectedAnswer,
+          isCorrect
+        ]
       );
     }
-  );
+
+    // ------------------------------------------
+    // Response
+    // ------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+      message: "Exam submitted successfully",
+
+      result: {
+        attempt_id: attempt.id,
+        exam_id: Number(examId),
+        total_questions: totalQuestions,
+        correct_answers: correctAnswers,
+        wrong_answers: wrongAnswers,
+        skipped_answers: skippedAnswers,
+        score,
+        time_taken_seconds: timeTakenSeconds
+      }
+    });
+
+  } catch (error) {
+    console.error(
+      "Submit exam error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to submit exam",
+      error: error.message
+    });
+  }
 };
+
 
 // ==========================================
 // GET EXAM RESULT
 // ==========================================
 
-const getExamResult = (req, res) => {
-  const userId = req.user.id;
-  const examId = req.params.id;
+const getExamResult = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const examId = req.params.id;
 
-  db.get(
-    `SELECT
-      a.id AS attempt_id,
-      a.user_id,
-      a.exam_id,
-      a.started_at,
-      a.submitted_at,
-      a.score,
-      a.total_questions,
-      a.correct_answers,
-      a.wrong_answers,
-      a.skipped_answers,
-      a.time_taken_seconds,
-      e.title,
-      e.topic
-     FROM attempts a
-     JOIN exams e ON a.exam_id = e.id
-     WHERE a.user_id = ?
-       AND a.exam_id = ?`,
-    [userId, examId],
-    (error, result) => {
-      if (error) {
-        return res.status(500).json({
-          success: false,
-          message: "Failed to fetch exam result",
-          error: error.message
-        });
-      }
+    // ------------------------------------------
+    // Get result
+    // ------------------------------------------
 
-      if (!result) {
-        return res.status(404).json({
-          success: false,
-          message: "No result found for this exam"
-        });
-      }
+    const resultQuery = await db.query(
+      `
+      SELECT
+        a.id AS attempt_id,
+        a.user_id,
+        a.exam_id,
+        a.started_at,
+        a.submitted_at,
+        a.score,
+        a.total_questions,
+        a.correct_answers,
+        a.wrong_answers,
+        a.skipped_answers,
+        a.time_taken_seconds,
+        e.title,
+        e.topic
+      FROM attempts a
+      JOIN exams e
+        ON a.exam_id = e.id
+      WHERE a.user_id = $1
+        AND a.exam_id = $2
+      `,
+      [userId, examId]
+    );
 
-      if (!result.submitted_at) {
-        return res.status(400).json({
-          success: false,
-          message: "Exam has not been submitted yet"
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        result: {
-          attempt_id: result.attempt_id,
-          exam_id: result.exam_id,
-          title: result.title,
-          topic: result.topic,
-          started_at: result.started_at,
-          submitted_at: result.submitted_at,
-          total_questions: result.total_questions,
-          correct_answers: result.correct_answers,
-          wrong_answers: result.wrong_answers,
-          skipped_answers: result.skipped_answers,
-          score: result.score,
-          time_taken_seconds: result.time_taken_seconds
-        }
+    if (resultQuery.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No result found for this exam"
       });
     }
-  );
+
+    const result = resultQuery.rows[0];
+
+    // ------------------------------------------
+    // Check submitted
+    // ------------------------------------------
+
+    if (!result.submitted_at) {
+      return res.status(400).json({
+        success: false,
+        message: "Exam has not been submitted yet"
+      });
+    }
+
+    // ------------------------------------------
+    // Response
+    // ------------------------------------------
+
+    return res.status(200).json({
+      success: true,
+
+      result: {
+        attempt_id: result.attempt_id,
+        exam_id: result.exam_id,
+        title: result.title,
+        topic: result.topic,
+        started_at: result.started_at,
+        submitted_at: result.submitted_at,
+        total_questions: result.total_questions,
+        correct_answers: result.correct_answers,
+        wrong_answers: result.wrong_answers,
+        skipped_answers: result.skipped_answers,
+        score: result.score,
+        time_taken_seconds:
+          result.time_taken_seconds
+      }
+    });
+
+  } catch (error) {
+    console.error(
+      "Get exam result error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch exam result",
+      error: error.message
+    });
+  }
 };
+
+
+// ==========================================
+// EXPORT
+// ==========================================
 
 module.exports = {
   startExam,

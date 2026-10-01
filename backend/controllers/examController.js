@@ -4,23 +4,15 @@ const db = require("../config/database");
 =========================================================
 INDIA TIMEZONE HELPERS
 =========================================================
-The frontend uses datetime-local, which does not include
-timezone information.
+Frontend uses datetime-local:
 
-Example:
 2026-09-29T18:00
 
-Our application treats these schedule values as IST
-(Asia/Kolkata).
-
-So we explicitly interpret schedule times as IST instead
-of allowing Node/SQLite timezone differences to cause
-incorrect ACTIVE / SCHEDULED status.
+Application treats these values as IST.
 =========================================================
 */
 
 const IST_OFFSET = "+05:30";
-
 
 const parseISTDate = (value) => {
   if (!value) {
@@ -29,10 +21,6 @@ const parseISTDate = (value) => {
 
   let normalized = String(value).trim();
 
-  /*
-    If the value already contains a timezone,
-    use it directly.
-  */
   if (
     normalized.endsWith("Z") ||
     /[+-]\d{2}:\d{2}$/.test(normalized)
@@ -46,13 +34,6 @@ const parseISTDate = (value) => {
     return date;
   }
 
-  /*
-    datetime-local value:
-    2026-09-29T18:00
-
-    Treat it explicitly as IST:
-    2026-09-29T18:00+05:30
-  */
   const date = new Date(
     `${normalized}${IST_OFFSET}`
   );
@@ -63,7 +44,6 @@ const parseISTDate = (value) => {
 
   return date;
 };
-
 
 const getExamStatus = (startValue, endValue) => {
   const now = new Date();
@@ -79,37 +59,27 @@ const getExamStatus = (startValue, endValue) => {
     return "NOT_STARTED";
   }
 
-  if (
-    now >= startTime &&
-    now < endTime
-  ) {
+  if (now >= startTime && now < endTime) {
     return "ACTIVE";
   }
 
   return "ENDED";
 };
 
-
 const formatDateForDatabase = (value) => {
   if (!value) {
     return value;
   }
 
-  /*
-    Keep the original datetime-local format.
-
-    Example:
-    2026-09-29T18:00
-  */
   return String(value).trim();
 };
 
 
-// ===============================
+// ========================================================
 // CREATE EXAM
-// ===============================
+// ========================================================
 
-const createExam = (req, res) => {
+const createExam = async (req, res) => {
   try {
     const {
       title,
@@ -166,7 +136,8 @@ const createExam = (req, res) => {
     const endValue =
       formatDateForDatabase(end_time);
 
-    const sql = `
+    const result = await db.query(
+      `
       INSERT INTO exams
       (
         title,
@@ -177,94 +148,71 @@ const createExam = (req, res) => {
         rules,
         status
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    db.run(
-      sql,
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id
+      `,
       [
         title.trim(),
-        topic
-          ? topic.trim()
-          : null,
+        topic ? topic.trim() : null,
         startValue,
         endValue,
         Number(duration_minutes),
         rules || null,
         "SCHEDULED"
-      ],
-      function (err) {
-
-        if (err) {
-          console.error(
-            "Create exam error:",
-            err.message
-          );
-
-          return res.status(500).json({
-            success: false,
-            message:
-              "Failed to create exam"
-          });
-        }
-
-        return res.status(201).json({
-          success: true,
-          message:
-            "Exam created successfully",
-
-          exam: {
-            id: this.lastID,
-            title: title.trim(),
-            topic: topic
-              ? topic.trim()
-              : null,
-            start_time: startValue,
-            end_time: endValue,
-            duration_minutes:
-              Number(duration_minutes),
-            rules: rules || null,
-            status:
-              getExamStatus(
-                startValue,
-                endValue
-              )
-          }
-        });
-      }
+      ]
     );
+
+    const examId = result.rows[0].id;
+
+    return res.status(201).json({
+      success: true,
+      message: "Exam created successfully",
+
+      exam: {
+        id: examId,
+        title: title.trim(),
+        topic: topic
+          ? topic.trim()
+          : null,
+        start_time: startValue,
+        end_time: endValue,
+        duration_minutes:
+          Number(duration_minutes),
+        rules: rules || null,
+        status:
+          getExamStatus(
+            startValue,
+            endValue
+          )
+      }
+    });
 
   } catch (error) {
 
     console.error(
       "Create exam error:",
-      error
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message:
-        "Server error"
+        "Failed to create exam",
+      error: error.message
     });
   }
 };
 
 
-// ===============================
+// ========================================================
 // GET ACTIVE EXAM
-// ===============================
+// ========================================================
 
-const getActiveExam = (req, res) => {
-
+const getActiveExam = async (req, res) => {
   try {
 
-    /*
-      Instead of comparing SQLite TEXT dates with
-      UTC ISO strings, fetch scheduled exams and
-      determine ACTIVE status using the IST helper.
-    */
-
-    const sql = `
+    const result = await db.query(
+      `
       SELECT
         id,
         title,
@@ -275,94 +223,76 @@ const getActiveExam = (req, res) => {
         rules
       FROM exams
       ORDER BY start_time ASC
-    `;
-
-    db.all(
-      sql,
-      [],
-      (err, exams) => {
-
-        if (err) {
-
-          console.error(
-            "Get active exam error:",
-            err.message
-          );
-
-          return res.status(500).json({
-            success: false,
-            message:
-              "Failed to fetch active exam"
-          });
-        }
-
-        const activeExam =
-          exams.find(
-            (exam) =>
-              getExamStatus(
-                exam.start_time,
-                exam.end_time
-              ) === "ACTIVE"
-          );
-
-        if (!activeExam) {
-
-          return res.json({
-            success: true,
-            active: false,
-            message:
-              "No active exam"
-          });
-        }
-
-        return res.json({
-          success: true,
-          active: true,
-
-          exam: {
-            id: activeExam.id,
-            title: activeExam.title,
-            topic: activeExam.topic,
-            start_time:
-              activeExam.start_time,
-            end_time:
-              activeExam.end_time,
-            duration_minutes:
-              activeExam.duration_minutes,
-            rules:
-              activeExam.rules
-          }
-        });
-      }
+      `
     );
+
+    const exams = result.rows;
+
+    const activeExam =
+      exams.find(
+        (exam) =>
+          getExamStatus(
+            exam.start_time,
+            exam.end_time
+          ) === "ACTIVE"
+      );
+
+    if (!activeExam) {
+      return res.json({
+        success: true,
+        active: false,
+        message:
+          "No active exam"
+      });
+    }
+
+    return res.json({
+      success: true,
+      active: true,
+
+      exam: {
+        id: activeExam.id,
+        title: activeExam.title,
+        topic: activeExam.topic,
+        start_time:
+          activeExam.start_time,
+        end_time:
+          activeExam.end_time,
+        duration_minutes:
+          activeExam.duration_minutes,
+        rules:
+          activeExam.rules
+      }
+    });
 
   } catch (error) {
 
     console.error(
       "Get active exam error:",
-      error
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message:
-        "Server error"
+        "Failed to fetch active exam",
+      error: error.message
     });
   }
 };
 
 
-// ===============================
+// ========================================================
 // GET EXAM BY ID
-// ===============================
+// ========================================================
 
-const getExamById = (req, res) => {
-
+const getExamById = async (req, res) => {
   try {
 
     const { id } = req.params;
 
-    const sql = `
+    const result = await db.query(
+      `
       SELECT
         id,
         title,
@@ -372,79 +302,62 @@ const getExamById = (req, res) => {
         duration_minutes,
         rules
       FROM exams
-      WHERE id = ?
-    `;
-
-    db.get(
-      sql,
-      [id],
-      (err, exam) => {
-
-        if (err) {
-
-          console.error(
-            "Get exam error:",
-            err.message
-          );
-
-          return res.status(500).json({
-            success: false,
-            message:
-              "Failed to fetch exam"
-          });
-        }
-
-        if (!exam) {
-
-          return res.status(404).json({
-            success: false,
-            message:
-              "Exam not found"
-          });
-        }
-
-        const status =
-          getExamStatus(
-            exam.start_time,
-            exam.end_time
-          );
-
-        return res.json({
-          success: true,
-
-          exam: {
-            ...exam,
-            status
-          }
-        });
-      }
+      WHERE id = $1
+      `,
+      [id]
     );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Exam not found"
+      });
+    }
+
+    const exam = result.rows[0];
+
+    const status =
+      getExamStatus(
+        exam.start_time,
+        exam.end_time
+      );
+
+    return res.json({
+      success: true,
+
+      exam: {
+        ...exam,
+        status
+      }
+    });
 
   } catch (error) {
 
     console.error(
       "Get exam error:",
-      error
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message:
-        "Server error"
+        "Failed to fetch exam",
+      error: error.message
     });
   }
 };
 
 
-// ===============================
+// ========================================================
 // GET ALL EXAMS - ADMIN
-// ===============================
+// ========================================================
 
-const getAllExams = (req, res) => {
-
+const getAllExams = async (req, res) => {
   try {
 
-    const sql = `
+    const result = await db.query(
+      `
       SELECT
         e.id,
         e.title,
@@ -463,75 +376,60 @@ const getAllExams = (req, res) => {
       FROM exams e
 
       ORDER BY e.start_time DESC
-    `;
-
-    db.all(
-      sql,
-      [],
-      (err, exams) => {
-
-        if (err) {
-
-          console.error(
-            "Get all exams error:",
-            err.message
-          );
-
-          return res.status(500).json({
-            success: false,
-            message:
-              "Failed to fetch exams"
-          });
-        }
-
-        const formattedExams =
-          exams.map((exam) => {
-
-            return {
-              ...exam,
-
-              status:
-                getExamStatus(
-                  exam.start_time,
-                  exam.end_time
-                )
-            };
-          });
-
-        return res.json({
-          success: true,
-
-          totalExams:
-            formattedExams.length,
-
-          exams:
-            formattedExams
-        });
-      }
+      `
     );
+
+    const exams = result.rows;
+
+    const formattedExams =
+      exams.map((exam) => {
+
+        return {
+          ...exam,
+
+          total_questions:
+            Number(exam.total_questions),
+
+          status:
+            getExamStatus(
+              exam.start_time,
+              exam.end_time
+            )
+        };
+      });
+
+    return res.json({
+      success: true,
+
+      totalExams:
+        formattedExams.length,
+
+      exams:
+        formattedExams
+    });
 
   } catch (error) {
 
     console.error(
       "Get all exams error:",
-      error
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message:
-        "Server error"
+        "Failed to fetch exams",
+      error: error.message
     });
   }
 };
 
 
-// ===============================
+// ========================================================
 // UPDATE EXAM - ADMIN
-// ===============================
+// ========================================================
 
-const updateExam = (req, res) => {
-
+const updateExam = async (req, res) => {
   try {
 
     const { id } = req.params;
@@ -551,7 +449,6 @@ const updateExam = (req, res) => {
       !end_time ||
       !duration_minutes
     ) {
-
       return res.status(400).json({
         success: false,
         message:
@@ -560,7 +457,6 @@ const updateExam = (req, res) => {
     }
 
     if (Number(duration_minutes) <= 0) {
-
       return res.status(400).json({
         success: false,
         message:
@@ -575,7 +471,6 @@ const updateExam = (req, res) => {
       parseISTDate(end_time);
 
     if (!startTime || !endTime) {
-
       return res.status(400).json({
         success: false,
         message:
@@ -584,7 +479,6 @@ const updateExam = (req, res) => {
     }
 
     if (endTime <= startTime) {
-
       return res.status(400).json({
         success: false,
         message:
@@ -592,161 +486,111 @@ const updateExam = (req, res) => {
       });
     }
 
-    const checkSql = `
+    const checkResult = await db.query(
+      `
       SELECT id
       FROM exams
-      WHERE id = ?
-    `;
-
-    db.get(
-      checkSql,
-      [id],
-      (err, exam) => {
-
-        if (err) {
-
-          console.error(
-            "Check exam error:",
-            err.message
-          );
-
-          return res.status(500).json({
-            success: false,
-            message:
-              "Database error"
-          });
-        }
-
-        if (!exam) {
-
-          return res.status(404).json({
-            success: false,
-            message:
-              "Exam not found"
-          });
-        }
-
-        const updateSql = `
-          UPDATE exams
-
-          SET
-            title = ?,
-            topic = ?,
-            start_time = ?,
-            end_time = ?,
-            duration_minutes = ?,
-            rules = ?
-
-          WHERE id = ?
-        `;
-
-        const startValue =
-          formatDateForDatabase(
-            start_time
-          );
-
-        const endValue =
-          formatDateForDatabase(
-            end_time
-          );
-
-        db.run(
-          updateSql,
-
-          [
-            title.trim(),
-
-            topic
-              ? topic.trim()
-              : null,
-
-            startValue,
-
-            endValue,
-
-            Number(duration_minutes),
-
-            rules || null,
-
-            id
-          ],
-
-          function (updateErr) {
-
-            if (updateErr) {
-
-              console.error(
-                "Update exam error:",
-                updateErr.message
-              );
-
-              return res.status(500).json({
-                success: false,
-                message:
-                  "Failed to update exam"
-              });
-            }
-
-            return res.json({
-              success: true,
-
-              message:
-                "Exam updated successfully",
-
-              exam: {
-                id: Number(id),
-
-                title:
-                  title.trim(),
-
-                topic:
-                  topic
-                    ? topic.trim()
-                    : null,
-
-                start_time:
-                  startValue,
-
-                end_time:
-                  endValue,
-
-                duration_minutes:
-                  Number(duration_minutes),
-
-                rules:
-                  rules || null,
-
-                status:
-                  getExamStatus(
-                    startValue,
-                    endValue
-                  )
-              }
-            });
-          }
-        );
-      }
+      WHERE id = $1
+      `,
+      [id]
     );
+
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Exam not found"
+      });
+    }
+
+    const startValue =
+      formatDateForDatabase(start_time);
+
+    const endValue =
+      formatDateForDatabase(end_time);
+
+    await db.query(
+      `
+      UPDATE exams
+      SET
+        title = $1,
+        topic = $2,
+        start_time = $3,
+        end_time = $4,
+        duration_minutes = $5,
+        rules = $6
+      WHERE id = $7
+      `,
+      [
+        title.trim(),
+        topic
+          ? topic.trim()
+          : null,
+        startValue,
+        endValue,
+        Number(duration_minutes),
+        rules || null,
+        id
+      ]
+    );
+
+    return res.json({
+      success: true,
+
+      message:
+        "Exam updated successfully",
+
+      exam: {
+        id: Number(id),
+
+        title:
+          title.trim(),
+
+        topic:
+          topic
+            ? topic.trim()
+            : null,
+
+        start_time:
+          startValue,
+
+        end_time:
+          endValue,
+
+        duration_minutes:
+          Number(duration_minutes),
+
+        rules:
+          rules || null,
+
+        status:
+          getExamStatus(
+            startValue,
+            endValue
+          )
+      }
+    });
 
   } catch (error) {
 
     console.error(
       "Update exam error:",
-      error
+      error.message
     );
 
     return res.status(500).json({
       success: false,
       message:
-        "Server error"
+        "Failed to update exam",
+      error: error.message
     });
   }
 };
 
 
-// ===============================
+// ========================================================
 // EXPORT
-// ===============================
+// ========================================================
 
 module.exports = {
   createExam,

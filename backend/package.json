@@ -13,6 +13,7 @@
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.1",
     "sqlite3": "^5.1.7",
     "swagger-ui-express": "^5.0.1"
   },

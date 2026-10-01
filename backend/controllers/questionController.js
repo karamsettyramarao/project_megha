@@ -4,160 +4,138 @@ const db = require("../config/database");
 // ADD QUESTION - ADMIN
 // ==========================================
 
-const addQuestion = (req, res) => {
-  const { examId } = req.params;
+const addQuestion = async (req, res) => {
+  try {
+    const { examId } = req.params;
 
-  const {
-    question_text,
-    option_a,
-    option_b,
-    option_c,
-    option_d,
-    correct_answer,
-    explanation
-  } = req.body;
+    const {
+      question_text,
+      option_a,
+      option_b,
+      option_c,
+      option_d,
+      correct_answer,
+      explanation
+    } = req.body;
 
-  // Validate required fields
-  if (
-    !question_text ||
-    !option_a ||
-    !option_b ||
-    !option_c ||
-    !option_d ||
-    !correct_answer
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "All question fields are required"
-    });
-  }
-
-  // Validate correct answer
-  const validAnswers = ["A", "B", "C", "D"];
-
-  if (!validAnswers.includes(correct_answer.toUpperCase())) {
-    return res.status(400).json({
-      success: false,
-      message: "Correct answer must be A, B, C or D"
-    });
-  }
-
-  // Check exam exists
-  const examSql = `
-    SELECT id
-    FROM exams
-    WHERE id = ?
-  `;
-
-  db.get(
-    examSql,
-    [examId],
-    (examError, exam) => {
-      if (examError) {
-        console.error(
-          "Check exam error:",
-          examError.message
-        );
-
-        return res.status(500).json({
-          success: false,
-          message: "Failed to check exam"
-        });
-      }
-
-      if (!exam) {
-        return res.status(404).json({
-          success: false,
-          message: "Exam not found"
-        });
-      }
-
-      // Get next question order
-      const orderSql = `
-        SELECT MAX(question_order) AS max_order
-        FROM questions
-        WHERE exam_id = ?
-      `;
-
-      db.get(
-        orderSql,
-        [examId],
-        (orderError, result) => {
-          if (orderError) {
-            console.error(
-              "Question order error:",
-              orderError.message
-            );
-
-            return res.status(500).json({
-              success: false,
-              message:
-                "Failed to determine question order"
-            });
-          }
-
-          const nextOrder =
-            (result.max_order || 0) + 1;
-
-          const insertSql = `
-            INSERT INTO questions
-            (
-              exam_id,
-              question_text,
-              option_a,
-              option_b,
-              option_c,
-              option_d,
-              correct_answer,
-              explanation,
-              question_order
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `;
-
-          db.run(
-            insertSql,
-            [
-              examId,
-              question_text.trim(),
-              option_a.trim(),
-              option_b.trim(),
-              option_c.trim(),
-              option_d.trim(),
-              correct_answer.toUpperCase(),
-              explanation
-                ? explanation.trim()
-                : null,
-              nextOrder
-            ],
-            function (insertError) {
-              if (insertError) {
-                console.error(
-                  "Add question error:",
-                  insertError.message
-                );
-
-                return res.status(500).json({
-                  success: false,
-                  message:
-                    "Failed to add question"
-                });
-              }
-
-              return res.status(201).json({
-                success: true,
-                message:
-                  "Question added successfully",
-                questionId: this.lastID,
-                examId: Number(examId),
-                questionOrder: nextOrder
-              });
-            }
-          );
-        }
-      );
+    // Validate required fields
+    if (
+      !question_text ||
+      !option_a ||
+      !option_b ||
+      !option_c ||
+      !option_d ||
+      !correct_answer
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "All question fields are required"
+      });
     }
-  );
+
+    // Validate correct answer
+    const validAnswers = ["A", "B", "C", "D"];
+
+    const normalizedCorrectAnswer =
+      correct_answer.toUpperCase();
+
+    if (!validAnswers.includes(normalizedCorrectAnswer)) {
+      return res.status(400).json({
+        success: false,
+        message: "Correct answer must be A, B, C or D"
+      });
+    }
+
+    // Check exam exists
+    const examResult = await db.query(
+      `
+      SELECT id
+      FROM exams
+      WHERE id = $1
+      `,
+      [examId]
+    );
+
+    if (examResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Exam not found"
+      });
+    }
+
+    // Get next question order
+    const orderResult = await db.query(
+      `
+      SELECT MAX(question_order) AS max_order
+      FROM questions
+      WHERE exam_id = $1
+      `,
+      [examId]
+    );
+
+    const maxOrder =
+      orderResult.rows[0].max_order;
+
+    const nextOrder =
+      maxOrder === null
+        ? 1
+        : Number(maxOrder) + 1;
+
+    // Insert question
+    const insertResult = await db.query(
+      `
+      INSERT INTO questions
+      (
+        exam_id,
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        correct_answer,
+        explanation,
+        question_order
+      )
+      VALUES
+      ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING id
+      `,
+      [
+        examId,
+        question_text.trim(),
+        option_a.trim(),
+        option_b.trim(),
+        option_c.trim(),
+        option_d.trim(),
+        normalizedCorrectAnswer,
+        explanation
+          ? explanation.trim()
+          : null,
+        nextOrder
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Question added successfully",
+      questionId: insertResult.rows[0].id,
+      examId: Number(examId),
+      questionOrder: nextOrder
+    });
+
+  } catch (error) {
+
+    console.error(
+      "Add question error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to add question",
+      error: error.message
+    });
+  }
 };
 
 
@@ -165,49 +143,50 @@ const addQuestion = (req, res) => {
 // GET QUESTIONS - USER
 // ==========================================
 
-const getExamQuestions = (req, res) => {
-  const { examId } = req.params;
+const getExamQuestions = async (req, res) => {
+  try {
+    const { examId } = req.params;
 
-  const sql = `
-    SELECT
-      id,
-      exam_id,
-      question_text,
-      option_a,
-      option_b,
-      option_c,
-      option_d,
-      question_order
-    FROM questions
-    WHERE exam_id = ?
-    ORDER BY question_order ASC, id ASC
-  `;
+    const result = await db.query(
+      `
+      SELECT
+        id,
+        exam_id,
+        question_text,
+        option_a,
+        option_b,
+        option_c,
+        option_d,
+        question_order
+      FROM questions
+      WHERE exam_id = $1
+      ORDER BY question_order ASC, id ASC
+      `,
+      [examId]
+    );
 
-  db.all(
-    sql,
-    [examId],
-    (error, questions) => {
-      if (error) {
-        console.error(
-          "Get questions error:",
-          error.message
-        );
+    const questions = result.rows;
 
-        return res.status(500).json({
-          success: false,
-          message:
-            "Failed to fetch questions"
-        });
-      }
+    return res.status(200).json({
+      success: true,
+      examId: Number(examId),
+      totalQuestions: questions.length,
+      questions
+    });
 
-      return res.status(200).json({
-        success: true,
-        examId: Number(examId),
-        totalQuestions: questions.length,
-        questions
-      });
-    }
-  );
+  } catch (error) {
+
+    console.error(
+      "Get questions error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch questions",
+      error: error.message
+    });
+  }
 };
 
 
@@ -215,166 +194,124 @@ const getExamQuestions = (req, res) => {
 // DELETE QUESTION - ADMIN
 // ==========================================
 
-const deleteQuestion = (req, res) => {
-  const {
-    examId,
-    questionId
-  } = req.params;
+const deleteQuestion = async (req, res) => {
+  try {
+    const {
+      examId,
+      questionId
+    } = req.params;
 
-  // First check whether question belongs
-  // to the requested exam
-  const checkSql = `
-    SELECT id
-    FROM questions
-    WHERE id = ?
-      AND exam_id = ?
-  `;
+    // ------------------------------------------
+    // Check question belongs to exam
+    // ------------------------------------------
 
-  db.get(
-    checkSql,
-    [questionId, examId],
-    (checkError, question) => {
-      if (checkError) {
-        console.error(
-          "Check question error:",
-          checkError.message
-        );
+    const checkResult = await db.query(
+      `
+      SELECT id
+      FROM questions
+      WHERE id = $1
+        AND exam_id = $2
+      `,
+      [questionId, examId]
+    );
 
-        return res.status(500).json({
-          success: false,
-          message:
-            "Failed to check question"
-        });
-      }
+    if (checkResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Question not found for this exam"
+      });
+    }
 
-      if (!question) {
-        return res.status(404).json({
-          success: false,
-          message:
-            "Question not found for this exam"
-        });
-      }
+    // ------------------------------------------
+    // Delete question
+    // ------------------------------------------
 
-      // Delete question
-      const deleteSql = `
-        DELETE FROM questions
-        WHERE id = ?
-          AND exam_id = ?
-      `;
+    await db.query(
+      `
+      DELETE FROM questions
+      WHERE id = $1
+        AND exam_id = $2
+      `,
+      [questionId, examId]
+    );
 
-      db.run(
-        deleteSql,
-        [questionId, examId],
-        function (deleteError) {
-          if (deleteError) {
-            console.error(
-              "Delete question error:",
-              deleteError.message
-            );
+    // ------------------------------------------
+    // Get remaining questions
+    // ------------------------------------------
 
-            return res.status(500).json({
-              success: false,
-              message:
-                "Failed to delete question"
-            });
-          }
+    const remainingResult = await db.query(
+      `
+      SELECT id
+      FROM questions
+      WHERE exam_id = $1
+      ORDER BY question_order ASC, id ASC
+      `,
+      [examId]
+    );
 
-          // Get remaining questions
-          // so question_order can be fixed
-          const remainingSql = `
-            SELECT id
-            FROM questions
-            WHERE exam_id = ?
-            ORDER BY question_order ASC, id ASC
-          `;
+    const remainingQuestions =
+      remainingResult.rows;
 
-          db.all(
-            remainingSql,
-            [examId],
-            (remainingError, remainingQuestions) => {
-              if (remainingError) {
-                console.error(
-                  "Remaining questions error:",
-                  remainingError.message
-                );
+    // ------------------------------------------
+    // No questions remaining
+    // ------------------------------------------
 
-                return res.status(500).json({
-                  success: false,
-                  message:
-                    "Question deleted but order update failed"
-                });
-              }
+    if (remainingQuestions.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message:
+          "Question deleted successfully",
+        examId: Number(examId),
+        totalQuestions: 0
+      });
+    }
 
-              // No questions remaining
-              if (remainingQuestions.length === 0) {
-                return res.status(200).json({
-                  success: true,
-                  message:
-                    "Question deleted successfully",
-                  examId: Number(examId),
-                  totalQuestions: 0
-                });
-              }
+    // ------------------------------------------
+    // Re-number questions
+    // ------------------------------------------
 
-              let updatedCount = 0;
-              let updateFailed = false;
-
-              remainingQuestions.forEach(
-                (item, index) => {
-                  const updateSql = `
-                    UPDATE questions
-                    SET question_order = ?
-                    WHERE id = ?
-                  `;
-
-                  db.run(
-                    updateSql,
-                    [index + 1, item.id],
-                    (updateError) => {
-                      if (updateFailed) {
-                        return;
-                      }
-
-                      if (updateError) {
-                        updateFailed = true;
-
-                        console.error(
-                          "Question order update error:",
-                          updateError.message
-                        );
-
-                        return res.status(500).json({
-                          success: false,
-                          message:
-                            "Question deleted but order update failed"
-                        });
-                      }
-
-                      updatedCount++;
-
-                      if (
-                        updatedCount ===
-                        remainingQuestions.length
-                      ) {
-                        return res.status(200).json({
-                          success: true,
-                          message:
-                            "Question deleted successfully",
-                          examId: Number(examId),
-                          totalQuestions:
-                            remainingQuestions.length
-                        });
-                      }
-                    }
-                  );
-                }
-              );
-            }
-          );
-        }
+    for (
+      let index = 0;
+      index < remainingQuestions.length;
+      index++
+    ) {
+      await db.query(
+        `
+        UPDATE questions
+        SET question_order = $1
+        WHERE id = $2
+        `,
+        [
+          index + 1,
+          remainingQuestions[index].id
+        ]
       );
     }
-  );
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Question deleted successfully",
+      examId: Number(examId),
+      totalQuestions:
+        remainingQuestions.length
+    });
+
+  } catch (error) {
+
+    console.error(
+      "Delete question error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to delete question",
+      error: error.message
+    });
+  }
 };
 
 

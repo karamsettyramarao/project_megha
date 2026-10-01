@@ -11,31 +11,29 @@ async function createAdmin() {
 
     const sql = `
       INSERT INTO admins (name, email, password)
-      VALUES (?, ?, ?)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (email) DO NOTHING
+      RETURNING id
     `;
 
-    db.run(
-      sql,
-      [adminName, adminEmail, hashedPassword],
-      function (err) {
-        if (err) {
-          if (err.message.includes("UNIQUE")) {
-            console.log("Admin already exists.");
-          } else {
-            console.error("Failed to create admin:", err.message);
-          }
-        } else {
-          console.log("Admin created successfully.");
-          console.log("Email:", adminEmail);
-          console.log("Password:", adminPassword);
-        }
+    const result = await db.query(sql, [
+      adminName,
+      adminEmail,
+      hashedPassword
+    ]);
 
-        db.close();
-      }
-    );
+    if (result.rows.length === 0) {
+      console.log("Admin already exists.");
+    } else {
+      console.log("Admin created successfully.");
+      console.log("Email:", adminEmail);
+      console.log("Password:", adminPassword);
+    }
+
   } catch (error) {
-    console.error("Error:", error.message);
-    db.close();
+    console.error("Failed to create admin:", error.message);
+  } finally {
+    await db.end();
   }
 }
 
