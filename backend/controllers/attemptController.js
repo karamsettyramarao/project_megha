@@ -36,21 +36,25 @@ const startExam = async (req, res) => {
     // ------------------------------------------
 
     const now = new Date();
-    const startTime = new Date(exam.start_time);
-    const endTime = new Date(exam.end_time);
+
+    const startTime = new Date(
+      `${exam.start_time}:00+05:30`
+    );
+
+    const endTime = new Date(
+      `${exam.end_time}:00+05:30`
+    );
 
     if (now < startTime) {
       return res.status(400).json({
-        success: false,
-        message: "Exam has not started yet"
-      });
+      success: false,
+      message: "Exam has not started yet"});
     }
 
     if (now > endTime) {
       return res.status(400).json({
-        success: false,
-        message: "Exam has already ended"
-      });
+      success: false,
+      message: "Exam has already ended"});
     }
 
     // ------------------------------------------
