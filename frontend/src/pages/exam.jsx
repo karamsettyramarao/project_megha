@@ -65,7 +65,7 @@ function Exam() {
         // ======================================
 
         const questionResponse = await api.get(
-          `/admin/exams/${id}/questions`,
+          `/exams/${id}/questions`,
           {
             headers: {
               Authorization: `Bearer ${token}`,

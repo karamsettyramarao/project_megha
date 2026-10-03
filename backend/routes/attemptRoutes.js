@@ -12,6 +12,10 @@ const {
 } = require("../controllers/examController");
 
 const {
+  getExamQuestions
+} = require("../controllers/questionController");
+
+const {
   authMiddleware,
   userOnly
 } = require("../middleware/authMiddleware");
@@ -40,6 +44,18 @@ router.get(
   authMiddleware,
   userOnly,
   getExamById
+);
+
+
+// ==========================================
+// GET EXAM QUESTIONS - USER ONLY
+// ==========================================
+
+router.get(
+  "/:id/questions",
+  authMiddleware,
+  userOnly,
+  getExamQuestions
 );
 
 
