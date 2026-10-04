@@ -145,7 +145,7 @@ const addQuestion = async (req, res) => {
 
 const getExamQuestions = async (req, res) => {
   try {
-    const { examId } = req.params;
+    const { id: examId } = req.params;
 
     const result = await db.query(
       `
