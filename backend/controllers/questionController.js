@@ -143,10 +143,23 @@ const addQuestion = async (req, res) => {
 // GET QUESTIONS - USER
 // ==========================================
 
+
+// ==========================================
+// GET QUESTIONS - USER + ADMIN
+// ==========================================
+
 const getExamQuestions = async (req, res) => {
   try {
-    const { id: examId } = req.params;
+    const { id, examId } = req.params;
+
     const actualExamId = examId || id;
+
+    if (!actualExamId) {
+      return res.status(400).json({
+        success: false,
+        message: "Exam ID is required"
+      });
+    }
 
     const result = await db.query(
       `
