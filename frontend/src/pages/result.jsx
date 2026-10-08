@@ -113,16 +113,16 @@ function Result() {
         <div className="result-score-card">
 
           <span>
-            Overall Score
+            Final Score
           </span>
 
           <strong>
-            {score.toFixed(2)}%
+             {Number.isInteger(score) ? score : score.toFixed(2)} / {totalQuestions}
           </strong>
 
           <p>
-            {correctAnswers} correct out of{" "}
-            {totalQuestions}
+            {correctAnswers} correct, {wrongAnswers} wrong,{" "}
+            {skippedAnswers} skipped
           </p>
 
         </div>
