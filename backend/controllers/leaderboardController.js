@@ -32,16 +32,35 @@ const getLeaderboard = async (req, res) => {
 
     const rows = result.rows;
 
-    const leaderboard = rows.map((row, index) => ({
-      rank: index + 1,
-      user_id: row.user_id,
-      name: row.name,
-      score: row.score,
-      correct_answers: row.correct_answers,
-      wrong_answers: row.wrong_answers,
-      skipped_answers: row.skipped_answers,
-      time_taken_seconds: row.time_taken_seconds
-    }));
+    let currentRank = 1;
+
+    const leaderboard = rows.map((row, index) => {
+      if (index > 0) {
+        const previousRow = rows[index - 1];
+
+        const sameScore =
+          Number(row.score) === Number(previousRow.score);
+
+        const sameTime =
+          Number(row.time_taken_seconds) ===
+          Number(previousRow.time_taken_seconds);
+
+        if (!sameScore || !sameTime) {
+          currentRank++;
+        }
+      }
+
+      return {
+        rank: currentRank,
+        user_id: row.user_id,
+        name: row.name,
+        score: row.score,
+        correct_answers: row.correct_answers,
+        wrong_answers: row.wrong_answers,
+        skipped_answers: row.skipped_answers,
+        time_taken_seconds: row.time_taken_seconds
+      };
+    });
 
     return res.status(200).json({
       success: true,

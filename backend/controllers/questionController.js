@@ -146,6 +146,7 @@ const addQuestion = async (req, res) => {
 const getExamQuestions = async (req, res) => {
   try {
     const { id: examId } = req.params;
+    const actualExamId = examId || id;
 
     const result = await db.query(
       `
@@ -162,14 +163,14 @@ const getExamQuestions = async (req, res) => {
       WHERE exam_id = $1
       ORDER BY question_order ASC, id ASC
       `,
-      [examId]
+      [actualExamId]
     );
 
     const questions = result.rows;
 
     return res.status(200).json({
       success: true,
-      examId: Number(examId),
+      examId: Number(actualExamId),
       totalQuestions: questions.length,
       questions
     });
@@ -262,7 +263,7 @@ const deleteQuestion = async (req, res) => {
         success: true,
         message:
           "Question deleted successfully",
-        examId: Number(examId),
+        examId: Number(actualExamId),
         totalQuestions: 0
       });
     }
