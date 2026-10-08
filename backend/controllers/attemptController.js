@@ -291,15 +291,7 @@ const submitExam = async (req, res) => {
 
     const totalQuestions = questions.length;
 
-    const score =
-      totalQuestions > 0
-        ? Number(
-            (
-              (correctAnswers / totalQuestions) *
-              100
-            ).toFixed(2)
-          )
-        : 0;
+    const score = Number((correctAnswers -(wrongAnswers * 0.25) ).toFixed(2));
 
     // ------------------------------------------
     // Calculate time taken
